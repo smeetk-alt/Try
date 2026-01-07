@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aether | 3D Global Data Dashboard</title>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    <style>
+        body { margin: 0; background: #020205; color: white; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
+        
+        /* Glassmorphism Sidebar */
+        .dashboard {
+            position: absolute; top: 20px; left: 20px; width: 280px;
+            background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 15px;
+            padding: 25px; z-index: 100; pointer-events: none;
+        }
+
+        .header { display: flex; align-items: center; gap: 12px; margin-bottom: 30px; }
+        .pulse-dot { width: 10px; height: 10px; background: #00d4ff; border-radius: 50%; animation: pulse 2s infinite; }
+        
+        .stat-card { margin-bottom: 25px; }
+        .stat-value { font-size: 28px; font-weight: 800; color: #00d4ff; font-family: monospace; }
+        .stat-label { font-size: 10px; text-transform: uppercase; opacity: 0.5; letter-spacing: 2px; }
+
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(0, 212, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0); } }
+        
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+<div class="dashboard">
+    <div class="header">
+        <div class="pulse-dot"></div>
+        <span style="font-weight: bold; letter-spacing: 2px; font-size: 14px;">AETHER GLOBAL</span>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Live Network Traffic</div>
+        <div class="stat-value" id="traffic">1,402 GB/s</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Active Global Nodes</div>
+        <div class="stat-value">842,019</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">System Security</div>
+        <div class="stat-value" style="color: #32ff7e;">ENCRYPTED</div>
+    </div>
+</div>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+    // --- SETUP ---
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1500);
+    camera.position.set(0, 50, 200);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.body.appendChild(renderer.domElement);
+
+    // --- BLOOM (THE GLOW) ---
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.8, 0.4, 0.85);
+    composer.addPass(bloom);
+
+    const globeGroup = new THREE.Group();
+    scene.add(globeGroup);
+
+    // --- GLOBE ---
+    const globeGeo = new THREE.SphereGeometry(50, 64, 64);
+    const globeMat = new THREE.MeshPhongMaterial({
+        color: 0x050505,
+        emissive: 0x112244,
+        specular: 0x555555,
+        shininess: 10,
+        wireframe: true
+    });
+    const globe = new THREE.Mesh(globeGeo, globeMat);
+    globeGroup.add(globe);
+
+    // --- STARS ---
+    const starGeo = new THREE.BufferGeometry();
+    const starPos = [];
+    for(let i=0; i<5000; i++) {
+        starPos.push((Math.random()-0.5)*1000, (Math.random()-0.5)*1000, (Math.random()-0.5)*1000);
+    }
+    starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
+    const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.7 });
+    scene.add(new THREE.Points(starGeo, starMat));
+
+    // --- COORDINATE MAPPING ---
+    const radius = 50;
+    const getCoords = (lat, lon, r) => {
+        const phi = (90 - lat) * (Math.PI / 180);
+        const theta = (lon + 180) * (Math.PI / 180);
+        return new THREE.Vector3(
+            -(r * Math.sin(phi) * Math.cos(theta)),
+            r * Math.cos(phi),
+            r * Math.sin(phi) * Math.sin(theta)
+        );
+    };
+
+    // --- DATA POINTS & ARCS ---
+    const cities = [
+        { name: "NYC", lat: 40.71, lon: -74.00 },
+        { name: "London", lat: 51.50, lon: -0.12 },
+        { name: "Mumbai", lat: 19.07, lon: 72.87 },
+        { name: "Tokyo", lat: 35.67, lon: 139.65 },
+        { name: "Sydney", lat: -33.86, lon: 151.20 }
+    ];
+
+    function createConnection(c1, c2) {
+        const start = getCoords(c1.lat, c1.lon, radius);
+        const end = getCoords(c2.lat, c2.lon, radius);
+
+        // Add Points
+        [start, end].forEach(pos => {
+            const pGeo = new THREE.SphereGeometry(0.7, 16, 16);
+            const pMat = new THREE.MeshBasicMaterial({ color: 0x00d4ff });
+            const p = new THREE.Mesh(pGeo, pMat);
+            p.position.copy(pos);
+            globeGroup.add(p);
+        });
+
+        // Add Arc
+        const mid = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+        const dist = start.distanceTo(end);
+        mid.normalize().multiplyScalar(radius + (dist * 0.3));
+
+        const curve = new THREE.QuadraticBezierCurve3(start, mid, end);
+        const lineGeo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(50));
+        const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x00d4ff, transparent: true, opacity: 0.4 }));
+        globeGroup.add(line);
+
+        // Moving Data Particle
+        const partGeo = new THREE.SphereGeometry(0.4, 8, 8);
+        const partMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const part = new THREE.Mesh(partGeo, partMat);
+        globeGroup.add(part);
+
+        let progress = Math.random();
+        function animPart() {
+            progress += 0.005;
+            if(progress > 1) progress = 0;
+            part.position.copy(curve.getPoint(progress));
+            requestAnimationFrame(animPart);
+        }
+        animPart();
+    }
+
+    // Connect them
+    createConnection(cities[0], cities[1]); // NYC - London
+    createConnection(cities[1], cities[2]); // London - Mumbai
+    createConnection(cities[2], cities[3]); // Mumbai - Tokyo
+    createConnection(cities[3], cities[4]); // Tokyo - Sydney
+
+    // --- LIGHTS & CONTROLS ---
+    scene.add(new THREE.AmbientLight(0xffffff, 0.3));
+    const light = new THREE.PointLight(0x00d4ff, 2);
+    light.position.set(150, 150, 150);
+    scene.add(light);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.7;
+
+    // --- RENDER ---
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        if(Math.random() > 0.95) {
+            document.getElementById('traffic').innerText = (1200 + Math.random()*300).toFixed(0) + " GB/s";
+        }
+        composer.render();
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        composer.setSize(window.innerWidth, window.innerHeight);
+    });
+</script>
+</body>
+</html>
